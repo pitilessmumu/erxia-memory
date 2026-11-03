@@ -1,0 +1,17 @@
+# 生成物，不进仓库
+lab/
+*.db
+*.db-wal
+*.db-shm
+
+# 模型文件很大，自己下载
+lab/models/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 自己那份语料和来源登记，别误传
+origin/corpus/*.local.md
+lab/来源.json
