@@ -107,6 +107,7 @@ def main():
         print("正文合计 %d 字，库路径 %s" % (chars, DB))
         return
 
+    config.check()          # 建库前先验路径：错了当场停，别在错地方建出一个空库（LOCAL-075）
     DB.parent.mkdir(parents=True, exist_ok=True)
     for p in (LAB / "data", LAB / "quiz"):
         p.mkdir(parents=True, exist_ok=True)

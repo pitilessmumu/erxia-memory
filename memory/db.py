@@ -42,8 +42,17 @@ CORPUS = corpus.CORPUS
 
 
 def connect():
+    """打开索引库。库不存在、或者存在但是 0 字节，都在这里当场停。
+
+    这是什么东西：读库的唯一入口，也是把 LOCAL-075 焊死的那道闸——
+    sqlite3.connect 对不存在的路径会安静地建一个空库，建完谁都不报错，
+    然后所有查询都「正常」返回空。空库比没有库更坏，因为它看着是好的。
+    """
     if not DB.is_file():
         sys.exit("索引库还没建：先跑 python db-build.py")
+    if DB.stat().st_size == 0:
+        sys.exit("索引库是 0 字节的空文件（sqlite 建库失败留下的壳）：%s\n"
+                 "删掉它再跑 python db-build.py" % DB)
     return sqlite3.connect(str(DB))
 
 

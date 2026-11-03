@@ -34,6 +34,7 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import config  # noqa: E402
 import corpus  # noqa: E402
 
 MEM = HERE.parent.parent / "记忆"
@@ -494,6 +495,7 @@ def _emit_fallback(relay, res, segs, n_seg, st):
 
 
 def main():
+    config.check()          # 入口自检：路径不对就别往下打注入块（打出来的也是错的）
     q, budget = _args(sys.argv[1:])
     relay = sections(MEM / "接力.md")
     q = _pick_task(q, relay)

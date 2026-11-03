@@ -151,7 +151,9 @@ def bm25(q, tf, dl, idf, avgdl, miss=0.0):
     余弦把「说得最全的长段」压下去。改成算占比，一句闲话就压不住真正对上的词。
     miss 是「语料里根本没有的词」按多少 idf 记——给高值，问错方向的话自己就沉下去。
     """
-    if not q or not dl:
+    if not q or not dl or not avgdl or avgdl <= 0:
+        # avgdl <= 0 说明语料里一段都没有：拿它当除数会 ZeroDivisionError，
+        # 而在调用方看来只是「这一问没分」——又是一个静默失败。直接给 0。
         return 0.0
     num, den = 0.0, 0.0
     for t, w in q.items():

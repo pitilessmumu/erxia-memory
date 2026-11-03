@@ -109,6 +109,29 @@ SRC_WEIGHT_CHAT = 0.65  # 其余 sid：历史聊天原文
 FALLBACK_RARE_IDF = 2.5  # 命中的主体词里至少得有一个够稀，光靠「为什么/什么」不算数
 
 
+def _check_thresholds():
+    """阈值自检：这几个数是模型之外唯一能「一改就悄悄变差」的地方，越界当场抛。
+
+    这是什么东西：把「取值范围」当接口的一部分写进代码，而不只是写在注释里。
+    改了不报错、只是分数一起漂——那是 LOCAL-081 那种静默失败。
+    第一版只查明显的越界（负值、超过 1 的概率、超过满分 2.2 的分），不追求覆盖全部。
+    """
+    for name, v, lo, hi in (
+            ("VEC_FLOOR", VEC_FLOOR, 0.0, 1.0),
+            ("VEC_LINE", VEC_LINE, 0.0, 1.0),
+            ("LEX_STRONG", LEX_STRONG, 0.0, 2.2),
+            ("RERANK_FLOOR", RERANK_FLOOR, 0.0, 1.0),
+            ("CONFIDENT", CONFIDENT, 0.0, 1.0),
+            ("GATE_AGREE", GATE_AGREE, 0.0, 1.0),
+            ("EXPAND_FLOOR", EXPAND_FLOOR, 0.0, 1.0)):
+        if not (lo <= v <= hi):
+            raise ValueError("阈值 %s = %r 跑出范围 [%s, %s]：改错了，或者注释过期了"
+                             % (name, v, lo, hi))
+
+
+_check_thresholds()
+
+
 def lex_overlap(q, text):
     """问题跟这段有没有 ≥2 个字的词面重合（中文取二元字，英文/数字取整词）。
 
