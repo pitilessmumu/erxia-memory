@@ -9,6 +9,8 @@
 用法：python quiz.py            # 跑全部
       python quiz.py -v         # 带出每条的命中位置
       python quiz.py --限 8     # 只看前 8 段
+      python quiz.py --重排     # 每题走候选池 + 重排，打印最高分（看正题/安静题分不分得开）
+      python quiz.py --向量     # 每题过一遍纯语义，打印最高分和耗时
 """
 import io
 import json
@@ -23,7 +25,8 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import recall  # noqa: E402
+import recall
+import corpus  # noqa: E402
 
 CASES = [
     {"q": "为什么进程活着但钩子收不到事件", "kw": ["UIPI", "icacls", "完整性"], "note": "低完整性摘钩"},
@@ -103,6 +106,41 @@ def run_one_hybrid(q, limit):
             "route": res.get("route")}
 
 
+def run_rerank_scores():
+    """每题走一遍候选池 + 重排，打印候选里最高的那个分。
+
+    原来这段在 rerank.py 的 --考 里，可它要 import hybrid 去拿候选，而 hybrid 又用 rerank——
+    两个模块互相依赖。挪到考卷这边以后：重排只做纯库，量具自己来喊（2026-11-04 拆的环）。
+    """
+    import pool
+    import rerank as rr
+    for c in CASES:
+        try:
+            segs, _, _, _ = pool.candidates(c["q"])
+            if not segs:
+                print("候选0  %s" % c["q"])
+                continue
+            scores = rr.rerank(c["q"], [s.get("text") or "" for s in segs])
+            print("%.3f  %d候选  %s" % (max(scores), len(scores), c["q"]))
+        except Exception as e:  # 缺模型时别整条链崩，报清楚就行
+            print("错 %s: %s" % (c["q"], e))
+
+
+def run_vec_scores():
+    """每题过一遍纯语义那一路，打印最高分和耗时——原来在 vec.py 的 --考 里。
+
+    挪过来的理由和 --重排 一样：生产模块不该反过来 import 考卷（2026-11-04 拆的环）。
+    """
+    import time as _t
+    import vec as vm
+    for c in CASES:
+        t0 = _t.time()
+        r = vm.search(c["q"], k=1)
+        ms = (_t.time() - t0) * 1000
+        top = r["segs"][0]["score"] if r.get("segs") else 0.0
+        print("%.3f  %5.0fms  %s  <<  %s" % (top, ms, c["q"], c["note"]))
+
+
 def main():
     limit = 8
     verbose = False
@@ -111,8 +149,14 @@ def main():
         verbose = True
     if "--限" in av:
         limit = int(av[av.index("--限") + 1])
+    if "--重排" in av:
+        run_rerank_scores()
+        return
+    if "--向量" in av:
+        run_vec_scores()
+        return
 
-    segs = recall.parse_segments()
+    segs = corpus.parse_segments()
     engine = "py"
     if "--引擎" in av:
         engine = av[av.index("--引擎") + 1]

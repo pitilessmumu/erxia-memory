@@ -24,13 +24,13 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import recall  # noqa: E402
+import corpus  # noqa: E402
 import config  # noqa: E402
 
 # 原来写死 <工作区>/memory-lab，仓库一搬就错；现在从 config 取（DB_INDEX 环境变量仍然优先）
 LAB = config.LAB
 DB = config.DB
-SEG_RE = recall.SEG_RE
+SEG_RE = corpus.SEG_RE
 
 
 import hashlib
@@ -59,7 +59,7 @@ def uid_of(sid, text):
 def collect():
     """把语料和事表读成待入库的行，顺带记下每段在文件里的起始行。"""
     segs, events = [], []
-    for f in sorted(recall.CORPUS.glob("*.md")):
+    for f in sorted(corpus.CORPUS.glob("*.md")):
         sid, anchor, kind, tm, start = f.stem, None, "", "", 0
         buf = []
         lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -75,7 +75,7 @@ def collect():
         if anchor:
             segs.append({"anchor": anchor, "sid": sid, "kind": kind, "time": tm,
                          "fname": f.name, "line": start, "text": "\n".join(buf).strip()})
-    for d in recall.parse_topics():
+    for d in corpus.parse_topics():
         events.append({"sid": d["sid"], "seq": d["seq"], "title": d["title"],
                        "a": d["a"], "b": d["b"]})
     return segs, events
@@ -101,7 +101,7 @@ def main():
         sys.exit("语料 0 段，不建空库。段头格式应该是：\n"
                  "  ## [会话id-序号] 谁说的 2026-11-02 09:20:18\n"
                  "（方括号里不能多东西；谁说的和日期之间只隔一个空格；日期可以不带）\n"
-                 "现在看的目录：%s" % recall.CORPUS)
+                 "现在看的目录：%s" % corpus.CORPUS)
     if "--看家底" in sys.argv:
         chars = sum(len(s["text"]) for s in segs)
         print("正文合计 %d 字，库路径 %s" % (chars, DB))
@@ -134,7 +134,7 @@ def main():
     total_dl = 0
     seen_uid = {}
     for s in segs:
-        toks = recall.terms(s["text"])
+        toks = corpus.terms(s["text"])
         total_dl += len(toks)
         uid = uid_of(s["sid"], s["text"])
         # 同一册里两节标题一样时 uid 会撞：给后来的一节加后缀，别让两段共用一个身份

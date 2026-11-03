@@ -36,13 +36,36 @@
 
 ```
 erxia-memory/
-  memory/          代码，二十来个 .py，一个模块管一件事
-  origin/          语料：corpus/*.md 每段一个标题，topics.md 是事表
+  memory/          代码，一个模块管一件事（怎么分的见下）
+  origin/          语料：corpus/*.md 一段一个段头，topics.md 是事表
   lab/             生成物，不进仓库：index/ 索引库、models/ 模型
   demo.py          跑一个例子
 ```
 
 `memory/config.py` 一个地方管所有路径。仓库放哪儿都行，不用改代码。
+
+代码是这么分的（2026-11-04 理过一遍——原来二十四个文件平铺在一个目录里，名字还跟内容对不上）：
+
+```
+底层零件
+  config.py       路径。谁都用它，它不 import 别人
+  corpus.py       认段头、切词、BM25 打分
+存储与检索
+  db.py           SQLite FTS5 字面那一路
+  vec.py          bge-small 语义那一路
+  pool.py         候选池：字面 + 语义 + 影子块，按锚点交错合并
+  rerank.py       bge-reranker 重排（纯库：问题 + 候选正文 → 分）
+编排与出口
+  hybrid.py       总装：阈值、对账闸、空结果原因码
+  route.py        定位层：这句话问的是哪一格
+  inject.py       换壳注入块
+  supersede.py    推翻登记：哪条旧结论已经不算数
+量具（不参与生产，只用来量自己）
+  quiz.py         考卷：固定题 + 死判据
+  hybrid-quiz.py / vec_eval.py / vec-rank.py / vec-dist.py / probe.py / shadow.py
+```
+
+一条规矩：**量具可以调被测物，被测物不许反过来调量具**。原来 `vec.py` 和 `rerank.py` 的 `--考` 都要去 import 考卷，等于生产模块依赖量具，那两处环就这么来的；现在统一挪到 `python quiz.py --向量` 和 `--重排`。
 
 ## 怎么跑
 
@@ -59,11 +82,13 @@ erxia-memory/
 python memory/db-build.py
 ```
 
-语料里现在有两份示例会话，都是编的。把你自己的会话按同样格式塞进 `origin/corpus/`，一段一个标题：
+语料里现在有两份示例会话，都是编的。把你自己的会话按同样格式塞进 `origin/corpus/`，一段一个段头：
 
 ```
-## [会话id-序号] 谁说的 · 2026-11-02 09:20:18
+## [会话id-序号] 谁说的 2026-11-02 09:20:18
 ```
+
+方括号后面依次是「谁说的」和时间，中间只用空格隔开。别顺手加个「·」或「-」——多一个圆点，正则就认不出来，那一段会安静地不进库、建库还照样报成功（错题本 LOCAL-078，我们自己踩过，十二段全丢、退出码还是 0）。
 
 **三、问它。**
 

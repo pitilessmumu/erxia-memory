@@ -10,9 +10,9 @@ except Exception:
     pass
 
 import numpy as np
-import vec, quiz, recall
+import vec, quiz, corpus
 
-segs = recall.parse_segments()
+segs = corpus.parse_segments()
 z = np.load(vec.INDEX, allow_pickle=True)
 anchors, mat = z["anchors"], z["vecs"]
 

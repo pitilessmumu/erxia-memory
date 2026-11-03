@@ -31,14 +31,14 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import recall  # noqa: E402
+import corpus  # noqa: E402
 import config  # noqa: E402
 
 # 原来写死 <工作区>/memory-lab，仓库一搬就错；现在从 config 取（DB_INDEX 环境变量仍然优先）
 LAB = config.LAB
 # 库路径可用环境变量换：重建时写临时库，写完原子换名，检索那边不会读到半截
 DB = config.DB
-CORPUS = recall.CORPUS
+CORPUS = corpus.CORPUS
 
 
 def connect():
@@ -61,13 +61,13 @@ def idf_of(df, n):
 
 def build_query(query, df, n):
     """把问题切成 token，砍废词、挂同义组、要求有具体词——跟 recall.py 同一套判据。"""
-    qv = {t: 1.0 for t in recall.terms(query)}
-    qv = {t: w for t, w in qv.items() if df.get(t, 0) <= recall.DEAD_DF * n}
-    for group in recall.ALIAS:
+    qv = {t: 1.0 for t in corpus.terms(query)}
+    qv = {t: w for t, w in qv.items() if df.get(t, 0) <= corpus.DEAD_DF * n}
+    for group in corpus.ALIAS:
         if not any(g in query or g in qv for g in group):
             continue
         for g in group:
-            for t in recall.terms(g):
+            for t in corpus.terms(g):
                 qv.setdefault(t, 0.5)
     unseen = math.log(1.0 + (n + 0.5) / 0.5)
     total = sum(w * idf_of(df.get(t, 0), n) for t, w in qv.items())
@@ -84,8 +84,8 @@ def build_query(query, df, n):
     # 「没有具体词」——第一次接自己那点语料的人一定撞上这个。阈值取「常数」和
     # 「半个天花板」里小的那个：库大的时候天花板远高于常数，行为跟原来一模一样。
     _cap = math.log(1.0 + (n + 0.5) / 0.5)
-    _t2 = min(recall.RARE_IDF2, _cap * 0.5)
-    _t3 = min(recall.RARE_IDF, _cap * 0.5)
+    _t2 = min(corpus.RARE_IDF2, _cap * 0.5)
+    _t3 = min(corpus.RARE_IDF, _cap * 0.5)
     specific = [t for t in qv
                 if len(t) >= 2 and (idf_of(df.get(t, 0), n) >=
                                     (_t2 if len(t) == 2 else _t3))
@@ -147,7 +147,7 @@ def search(query, nseg=8, ndoc=5, kind=""):
     db = connect()
     avgdl = float(db.execute("SELECT v FROM meta WHERE k = 'avgdl'").fetchone()[0])
     # 库只干它擅长的：按 FTS5 的排序快速捞出候选（不重读 894 段正文）。
-    # 打分仍走 recall.bm25 同一把秤，比出来的分才说明问题——不然两套分不可比。
+    # 打分仍走 corpus.bm25 同一把秤，比出来的分才说明问题——不然两套分不可比。
     hits = db.execute("SELECT anchor FROM seg_fts WHERE seg_fts MATCH ? "
                       "ORDER BY bm25(seg_fts) LIMIT 400", (expr,)).fetchall()
     need = {t: df.get(t) for t in qv if df.get(t)}
@@ -162,7 +162,7 @@ def search(query, nseg=8, ndoc=5, kind=""):
         if not row or (kind and row[2] != kind):
             continue
         tf = Counter(row[8].split())
-        score = recall.bm25(qv, tf, row[7], idf_map, avgdl, unseen)
+        score = corpus.bm25(qv, tf, row[7], idf_map, avgdl, unseen)
         if score < 0.3:  # 跟 recall.py 同一条线：低于 0.3 判没命中
             continue
         segs.append({"anchor": anchor, "score": score, "sid": row[0], "n": row[1],
@@ -176,7 +176,7 @@ def search(query, nseg=8, ndoc=5, kind=""):
         if not mine:
             continue
         top = [x["score"] for x in mine[:2]]
-        tscore = sum(1 for t in qv if t in recall.terms(title) and df.get(t)) * 0.15
+        tscore = sum(1 for t in qv if t in corpus.terms(title) and df.get(t)) * 0.15
         events.append({"sid": sid, "seq": seq, "title": title, "a": a, "b": b,
                        "score": top[0] + 0.3 * (top[1] if len(top) > 1 else 0.0) + tscore,
                        "hits": len(mine), "segs": mine})
@@ -199,7 +199,7 @@ def book(events, segs):
 
 
 def drill(spec):
-    m = recall.RANGE_RE.search(spec)
+    m = corpus.RANGE_RE.search(spec)
     if not m:
         sys.exit("回钻要一个范围，像 d1744eaa-036-d1744eaa-050")
     sid, a, b = m.group(1), int(m.group(2)), int(m.group(4))
@@ -303,13 +303,13 @@ def main():
                  e["sid"], e["a"], e["sid"], e["b"]))
 
     print("\n命中段")
-    qlong = [t for t in recall.terms(query) if len(t) >= 2]
+    qlong = [t for t in corpus.terms(query) if len(t) >= 2]
     for s in segs:
         owner = next((e for e in events
                       if e["sid"] == s["sid"] and e["a"] <= s["n"] <= e["b"]), None)
         tag = "第%s事 %s" % (owner["seq"], owner["title"]) if owner else "未归事"
         print("\n[%s] %.2f %s %s  %s" % (s["anchor"], s["score"], s["kind"], s["time"], tag))
-        print(recall.snippet(s["text"], qlong, args.width))
+        print(corpus.snippet(s["text"], qlong, args.width))
     if args.book:
         print("\n（这次查到的事已经记账）")
 

@@ -10,8 +10,11 @@ cross-encoder 把「问题 + 段落」一起喂进去，判的是这段到底答
 分数口径：模型输出 logits，过 sigmoid 压到 0~1，越大越相关。
 
 用法：
-  python rerank.py "加新功能之前先干什么"   # 看库里候选段各打多少分
-  python rerank.py --考                     # 19 题各打一遍（正题 / 安静题分界）
+  python rerank.py "加新功能之前先干什么"   # 看候选段各打多少分（候选从 pool.py 取）
+  python quiz.py --重排                     # 全部考题各打一遍（正题 / 安静题分界）
+
+这一层是纯库：给「问题 + 候选正文」回分数。候选从哪儿来它不管，命令行演示才去
+pool.py 取——这样它不会反过来依赖 hybrid（2026-11-04 拆的环）。
 """
 import os
 import re
@@ -140,24 +143,9 @@ def main():
     if not av:
         print(__doc__)
         return
-    if "--考" in av:
-        import hybrid
-        import quiz
-        for c in quiz.CASES:
-            try:
-                segs, _, _, _ = hybrid.candidates(c["q"])
-                if not segs:
-                    print("候选0  %s" % c["q"])
-                    continue
-                scores = rerank(c["q"], [s.get("text") or "" for s in segs])
-                best = max(scores)
-                print("%.3f  %d候选  %s" % (best, len(scores), c["q"]))
-            except Exception as e:  # 缺模型时别整条链崩，报清楚就行
-                print("错 %s: %s" % (c["q"], e))
-        return
     q = av[0]
-    import hybrid
-    segs, _, _, _ = hybrid.candidates(q)
+    import pool
+    segs, _, _, _ = pool.candidates(q)
     if not segs:
         print("候选一条都没有")
         return

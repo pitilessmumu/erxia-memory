@@ -2,8 +2,8 @@
 import os, sys, time
 # 原来写死本机绝对路径；改成脚本自己所在目录，放在哪儿都能跑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import hybrid, quiz, recall, vec_eval, db
-texts = recall.parse_segments()
+import hybrid, quiz, corpus, vec_eval, db
+texts = corpus.parse_segments()
 
 def show(title, cases):
     ok=0; ms=0

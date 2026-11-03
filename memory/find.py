@@ -17,7 +17,7 @@ except Exception:
 
 # 原来按 __file__ 往上两级拼 origin/corpus，仓库一搬就错；现在从 config 取
 CORPUS = config.CORPUS
-# 与 recall.SEG_RE 同一口径：段头带完整日期，旧的无日期段头也认。
+# 与 corpus.SEG_RE 同一口径：段头带完整日期，旧的无日期段头也认。
 SEG_RE = re.compile(r"^##\s*\[([^\]]+)\]\s*(\S+)\s*((?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2}:\d{2})\s*$")
 
 kws = [a for a in sys.argv[1:] if not a.startswith("--")]

@@ -14,7 +14,7 @@ try:
 except Exception:
     pass
 
-import recall
+import corpus
 import quiz
 
 # 题面里刻意不出现的词，正是 kw 里那些
@@ -58,7 +58,7 @@ def main():
     av = sys.argv[1:]
     if "--限" in av:
         limit = int(av[av.index("--限") + 1])
-    texts = recall.parse_segments()
+    texts = corpus.parse_segments()
     ok_l = ok_v = 0
     print("换说法考卷（前 %d 段内算命中）" % limit)
     for c in CASES:

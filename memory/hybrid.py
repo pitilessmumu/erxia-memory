@@ -33,6 +33,8 @@ except Exception:
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import pool  # 候选池在单独一层（见 pool.py）
+
 # 2026-11-02 加题重校：5 道安静题的语义 top1 最高 0.568（PHP 数组），
 # 0.59 留 0.022 余量；降到 0.55 会让「PHP 数组」假阳性，所以不再往下压。
 VEC_FLOOR = 0.59
@@ -53,16 +55,9 @@ RE_NEGATE = __import__("re").compile(
 
 # 换说法兜底的门槛：换出来的问法，重排最高分得过这条线才许当答案。
 # 没过就闭嘴——「我没有」比「我给你这个」安全。
-# 影子块的门槛：真人问法跟事实段的语义相似度到这个数，才把 parent 拉进候选。
-SHADOW_SIM = 0.62
 EXPAND_FLOOR = 0.45
 RERANK_FLOOR = 0.30
-# DECISION: 送重排的候选 20 -> 60 | when: 2026-11-03 | cause: 现场逼的
-# 实测：问「球跑一阵就不动了、消息不再投递到会话」，正确答案（讲桥写死投 20 条的）
-# 在语义里排第 **30**——被 CAND=20 挡在门外，可重排给它 **0.8567**。
-# 精排判得准、粗排把它丢了，这是双塔粗排的固有短板；只能让重排多看一眼。
-# 代价：每次多比 ~40 对，实测每问多 1-2 秒。杂问会不会因此更容易撞，跑完看。
-CAND = 35          # 合并后送重排的候选数
+# 送重排的候选数 CAND 与影子块门槛 SHADOW_SIM 在 pool.py（候选池那层，2026-11-04 搬走）
 # 字面一条都没落上时（问题里没有库里的具体词），不能光靠重排一条 0.63 的段就出声：
 # 「今天天气怎么样」能撞上转写测试里那句「今天天氣不錯」，重排分 0.79，但它不是记忆。
 # 这时要过安静闸：语义 ≥0.59，或者「问题里有记忆认得的词 + 重排 ≥0.75」才开口。
@@ -112,58 +107,6 @@ SRC_WEIGHT_CHAT = 0.65  # 其余 sid：历史聊天原文
 # 两条都一条没落上。判安静之前再用主体词去抽屉的「找我的说法」别名行里找一遍，
 # 命中就用别名行本身过重排闸（同一个 RERANK_FLOOR），全过程本地、不调云端。
 FALLBACK_RARE_IDF = 2.5  # 命中的主体词里至少得有一个够稀，光靠「为什么/什么」不算数
-
-
-def candidates(q, k=CAND):
-    """宽召回：字面（SQLite/FTS5）和语义（bge-small）各拿一批，按 anchor 去重交错合并。
-
-    交错而不是「字面全要、语义补位」：字面 top20 很可能全被同一个词的变体占满，
-    语义那条正题就挤不进候选了。交错合并保证两路各自的头部都进得来。
-    返回 (合并候选, events, 字面候选, 语义最高分)。
-    """
-    import db as dbmod
-    import vec
-
-    segs, events = [], []
-    r = dbmod.search(q, nseg=k, ndoc=3)
-    if not r.get("err"):
-        segs = list(r.get("segs") or [])
-        events = r.get("events") or []
-    v = vec.search(q, k=k, floor=0.0)
-    vsegs = [] if v.get("err") else (v.get("segs") or [])
-    # 影子块（真人问法）：命中只把 parent 那段拉进候选，影子块自己不作为答案。
-    # 三条硬约束见 memory\shadow.py 头注释（不进字面索引、不当答案、不到线不进）。
-    try:
-        import shadow
-        have = {s.get("anchor") for s in vsegs}
-        for sp in shadow.search(q, k=3, floor=SHADOW_SIM):
-            if sp["parent"] not in have:
-                vsegs.append({"anchor": sp["parent"], "score": sp["sim"], "via": "shadow"})
-                have.add(sp["parent"])
-    except Exception as e:
-        print("影子块跳过（%s: %s）" % (type(e).__name__, e), file=sys.stderr)
-    vtop = max([float(s.get("score") or 0) for s in vsegs], default=0.0)
-    out, seen = [], set()
-    for i in range(max(len(segs), len(vsegs))):
-        for src in (segs, vsegs):
-            if i >= len(src):
-                continue
-            s = src[i]
-            a = s.get("anchor")
-            if not a or a in seen:
-                continue
-            seen.add(a)
-            out.append(s)
-    out = out[:k]
-    # 语义那路只带 160 字截断，重排要看全段：缺的从正文补回来。
-    if any(len(s.get("text") or "") <= 160 for s in out):
-        import recall
-        full = recall.parse_segments()
-        for s in out:
-            body = (full.get(s.get("anchor")) or {}).get("text")
-            if body:
-                s["text"] = body
-    return out, events, segs, vtop
 
 
 def lex_overlap(q, text):
@@ -281,7 +224,7 @@ def local_fallback(q, k=8):
 def _search(q, k=8, floor=VEC_FLOOR, vec_k=30, lex_strong=LEX_STRONG, rerank=RERANK_ON):
     if rerank:
         try:
-            segs, events, lex, vtop = candidates(q, CAND)
+            segs, events, lex, vtop = pool.candidates(q, pool.CAND)
             if not segs:
                 fb = local_fallback(q, k)
                 if fb:

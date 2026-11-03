@@ -8,7 +8,7 @@
 用法：
   python vec.py --建      # 给全部段落算坐标，写 lab\\index\\emb.npz（约几十秒）
   python vec.py "要办的事"  # 语义取前 N 段（--宽）
-  python vec.py --考      # 十条题各打分，用来定安静门槛
+  python quiz.py --向量   # 十条题各打分，用来定安静门槛（考卷那边统一跑）
 """
 import os
 import sys, json, time, os
@@ -107,8 +107,8 @@ def build(force=False):
 
 def _parse_segments():
     sys.path.insert(0, str(HERE))
-    import recall
-    d = recall.parse_segments()
+    import corpus
+    d = corpus.parse_segments()
     return [(a, s) for a, s in d.items()]
 
 
@@ -145,14 +145,7 @@ def main():
         build(force="--强" in av)
         return
     if "--考" in av:
-        import quiz
-        for c in quiz.CASES:
-            t0 = time.time()
-            r = search(c["q"], k=1)
-            ms = (time.time() - t0) * 1000
-            top = r["segs"][0]["score"] if r.get("segs") else 0.0
-            print("%.3f  %5.0fms  %s  <<  %s" % (top, ms, c["q"], c["note"]))
-        return
+        sys.exit("--考 挪到考卷那边了：python quiz.py --向量（2026-11-04 改，免得生产模块反过来 import 考卷）")
     if not av:
         print(__doc__)
         return

@@ -9,6 +9,10 @@
 不用把 接力.md（55K）和 常设.md（36K）整篇塞进去——那就是以前掉记忆的根源：
 塞满上下文没几天，真正相关的几段又被挤出去。
 
+流程拆成了几个函数（2026-11-04 拆的）：原来 main 一个人三百多行，从头打到尾，
+改一处打印要去三百行里找位置。现在按「定问题 → 打固定段 → 选规矩小节 → 取历史段
+→ 打历史段 → 兜底」各占一段，main 只负责串起来。
+
 用法：
   python inject.py --问 "接着做记忆插件的注入部分"
   python inject.py                       # 不给问题，就拿接力里最新的「下一步」
@@ -30,7 +34,7 @@ except Exception:
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import recall  # noqa: E402
+import corpus  # noqa: E402
 
 MEM = HERE.parent.parent / "记忆"
 FILES = [("常设", MEM / "常设.md"), ("接力", MEM / "接力.md"), ("现场", MEM / "现场.md")]
@@ -41,6 +45,9 @@ TAIL_ONLY = {"现场": 30}  # 现场是流水账，只认最后三十节
 # 注入块里「到哪了」读施工进度（基调 + 三条线），不读 现在.md——
 # 两个文件都写「到哪了」必然烂一个，2026-11-02 查出来烂的是 现在.md。
 PLAIN = MEM / "施工进度.md"
+
+# 标准记忆文件的 sid：常设四册合起来是 ac000001、规则 ac000003、二夏记忆 ac000004、抽屉 ac000005
+MEM_SIDS = {"ac000001": "常设", "ac000003": "规则", "ac000004": "二夏记忆", "ac000005": "抽屉"}
 
 
 def sections(path, tail=None):
@@ -137,33 +144,59 @@ def _say(s):
     _PRE_LEN[0] += len(s) + 1
 
 
-def main():
+class _St(object):
+    """注入块的账本：打到哪儿打到多少字、哪些小节已经打过。"""
+
+    def __init__(self, budget):
+        # DECISION: 前面已打印的固定段也要进预算账 | when: 2026-11-03 | cause: 做歪的
+        # 原来 used 从 0 起算，可注入块最前面已经打了四段固定内容——
+        # 【这壳要接着办的事】最多 300 字、【当前基调】约 100、【开工前必须先读】约 120、
+        # 【现在到哪儿了】最多 700。加起来一千二，全没进账，「预算 1500」实际输出近两千，
+        # 只打一行「超预算了」照旧输出（智谱挑出来的）。
+        # 不能写死一个数——2026-11-03 写过 1220，实际只用了 820，白扣四百预算，
+        # 结果「以前在哪儿做过」那段一条都给不出来。
+        self.used = _PRE_LEN[0]
+        self.budget = budget
+        self.titles = set()   # 第一路打过的小节标题，兜底不许再打一遍
+
+    def say(self, line):
+        print(line)
+        self.used += len(line) + 1
+
+
+def _arg_of(av, flag):
+    """取 --xx 后面那个参数；没有、或者跟上来的又是一个 --xx，都算没给。"""
+    try:
+        i = av.index(flag)
+    except ValueError:
+        return None
+    if i + 1 >= len(av) or av[i + 1].startswith("--"):
+        return None
+    return av[i + 1]
+
+
+def _args(av):
+    """--问 和 --预算。问题不给就留空，交给 _pick_task 去推。"""
     q = ""
     budget = 1500
-    av = sys.argv[1:]
-
-    def arg_of(flag):
-        """取 --xx 后面那个参数；没有、或者跟上来的又是一个 --xx，都算没给。"""
-        try:
-            i = av.index(flag)
-        except ValueError:
-            return None
-        if i + 1 >= len(av) or av[i + 1].startswith("--"):
-            return None
-        return av[i + 1]
-
     if "--问" in av:
-        q = arg_of("--问")
+        q = _arg_of(av, "--问")
         if not (q or "").strip():
             sys.exit('--问 后面要跟一句话，比如 --问 "接着做注入"。这次没给。')
     if "--预算" in av:
-        bv = arg_of("--预算")
+        bv = _arg_of(av, "--预算")
         try:
             budget = max(200, int(bv))
         except (TypeError, ValueError):
             sys.exit("--预算 后面要跟一个数字，比如 --预算 1500。")
+    return q, budget
 
-    relay = sections(MEM / "接力.md")
+
+def _pick_task(q, relay):
+    """没给 --问 时自己推一个要办的事，三处来源按优先级往下退。
+
+    施工进度的「下一步」→ 现场最后一条流水 → 接力里带「下一步」的那节。
+    """
     # DECISION: 注入块的任务优先取施工进度的「下一步」 | when: 2026-11-02 | cause: 现场逼的
     # 以前直接取现场最后一条流水，可流水记的是「刚干完的事」。拿它当任务，新壳会去补
     # 一段早做完的账——2026-11-02 实际发生过：它读到的任务是「杂问只跑五句被木木点到」，
@@ -201,14 +234,11 @@ def main():
                     break
         if not q:
             q = relay[-1][0] if relay else ""
-    if not q:
-        sys.exit("既没给 --问，接力里也没找到「下一步」。")
+    return q
 
-    _say("【这壳要接着办的事】" + re.sub(r"\s+", " ", q)[:300])
 
-    # 注入块放「规则」，不放「信息」（2026-11-02 智谱定的，用户那句「我很累」逼出来的）：
-    # 信息按需去取，规则常驻。这样闲聊时不会被工程内容压着，闲聊里被顺嘴问到工程问题时
-    # 又不会愣住——因为「什么时候必须去读」是写死的，不靠临场想起。
+def _say_tone():
+    """当前基调：一行指针，不是整张图纸。"""
     # DECISION: 注入块带一行基调指针 | when: 2026-11-03 | cause: 现场逼的
     # 白天基调管理讨论定的六步闭环第 3 步——「换壳注入块里加一行基调指针，
     # 不是把整个图纸塞进注入块，而是一行：当前基准是什么、什么时候定的」。
@@ -222,31 +252,42 @@ def main():
     except Exception:
         pass
 
+
+def _say_readme():
+    """开工前必须先读什么：只写「什么时候必须读」，不塞内容。"""
+    # 注入块放「规则」，不放「信息」（2026-11-02 智谱定的，用户那句「我很累」逼出来的）：
+    # 信息按需去取，规则常驻。这样闲聊时不会被工程内容压着，闲聊里被顺嘴问到工程问题时
+    # 又不会愣住——因为「什么时候必须去读」是写死的，不靠临场想起。
     _say("\n【开工前必须先读】")
     _say("动手之前先读 记忆\\施工进度.md —— 那是「在盖什么、到第几层」的唯一依据。")
     _say("下面两种情况必须先读：①他提到任何在做的线、任务或决定；②你要改任何生产文件。")
     _say("纯闲聊（他说累、想聊会儿）不用读，也不用主动提工程的事。")
 
-    # 零、先给一段人话：木木看不懂技术细节，但得一眼知道到哪一步了
-    if PLAIN.is_file():
-        raw = PLAIN.read_text(encoding="utf-8", errors="replace")
-        # 优先只带「注入摘要」那一节：全文太长（两千多字），而且开头是文件自己的说明，
-        # 截前七百字会截到元信息、截不到进度（2026-11-02 实际截错过一次）。
-        m = re.search(r"(?ms)^##\s*注入摘要.*?(?=^##\s|\Z)", raw)
-        plain = m.group(0) if m else raw
-        plain = "\n".join(x for x in plain.splitlines()
-                           if not x.startswith("#") and not x.startswith("---")).strip()
-        if plain:
-            _say("\n【现在到哪儿了】")
-            _say(plain[:700])
 
-    # 一、规矩和交接口径：按小节打分，只取相关的那几节
+def _say_plain():
+    """零、先给一段人话：木木看不懂技术细节，但得一眼知道到哪一步了。"""
+    if not PLAIN.is_file():
+        return
+    raw = PLAIN.read_text(encoding="utf-8", errors="replace")
+    # 优先只带「注入摘要」那一节：全文太长（两千多字），而且开头是文件自己的说明，
+    # 截前七百字会截到元信息、截不到进度（2026-11-02 实际截错过一次）。
+    m = re.search(r"(?ms)^##\s*注入摘要.*?(?=^##\s|\Z)", raw)
+    plain = m.group(0) if m else raw
+    plain = "\n".join(x for x in plain.splitlines()
+                      if not x.startswith("#") and not x.startswith("---")).strip()
+    if plain:
+        _say("\n【现在到哪儿了】")
+        _say(plain[:700])
+
+
+def _rule_pool(q):
+    """一、规矩和交接口径：按小节打分，越像这次要办的事越靠前。"""
     pool = []
     for tag, path in FILES:
         for title, body in sections(path, TAIL_ONLY.get(tag)):
             if len(body) < 30:
                 continue
-            toks = recall.terms(title + " " + body[:1500])
+            toks = corpus.terms(title + " " + body[:1500])
             pool.append({"tag": tag, "title": title, "body": body,
                          "tf": Counter(toks), "dl": len(toks)})
     df = Counter()
@@ -256,22 +297,16 @@ def main():
     n = max(1, len(pool))
     sidf = {t: __import__("math").log(1.0 + (n - c + 0.5) / (c + 0.5)) for t, c in df.items()}
     avgdl = sum(d["dl"] for d in pool) / n
-    qv = {t: 1.0 for t in recall.terms(q)}
+    qv = {t: 1.0 for t in corpus.terms(q)}
     miss = __import__("math").log(1.0 + (n + 0.5) / 0.5)
     for d in pool:
-        d["score"] = recall.bm25(qv, d["tf"], d["dl"], sidf, avgdl, miss)
+        d["score"] = corpus.bm25(qv, d["tf"], d["dl"], sidf, avgdl, miss)
     pool.sort(key=lambda d: -d["score"])
+    return pool
 
-    # DECISION: 前面已打印的固定段也要进预算账 | when: 2026-11-03 | cause: 做歪的
-    # 原来 used 从 0 起算，可注入块最前面已经打了四段固定内容——
-    # 【这壳要接着办的事】最多 300 字、【当前基调】约 100、【开工前必须先读】约 120、
-    # 【现在到哪儿了】最多 700。加起来一千二，全没进账，「预算 1500」实际输出近两千，
-    # 只打一行「超预算了」照旧输出（智谱挑出来的）。
-    # 前面已打印的固定段（办的事 / 基调 / 必读 / 到哪了）按实际长度记账。
-    # 不能写死一个数——2026-11-03 写过 1220，实际只用了 820，白扣四百预算，
-    # 结果「以前在哪儿做过」那段一条都给不出来。
-    used = _PRE_LEN[0]
-    printed_titles = set()  # 第一路打过的小节标题，兜底不许再打一遍
+
+def _emit_rules(pool, st):
+    """第一路：常设 / 接力 里对得上的小节，每个来源最多一节、正文 200 字。"""
     for tag in ("常设", "接力"):
         # 每个来源最多一节、正文 200 字（2026-11-02 木木说首条消息太长了：
         # 原来常设两节 817 字 + 以前三段 875 字，加起来比真正要办的活还长）
@@ -279,16 +314,15 @@ def main():
         if not got:
             continue
         _hdr = "\n【%s里对得上的小节】" % tag
-        print(_hdr)
-        used += len(_hdr)
+        st.say(_hdr)
         for d in got:
             body = clip(d["body"], 200)
-            line = "· " + d["title"] + "：" + body
-            print(line)
-            used += len(line) + 1
-            printed_titles.add(d["title"])
+            st.say("· " + d["title"] + "：" + body)
+            st.titles.add(d["title"])
 
-    # 二、以前怎么做的：会话原文里的段（2026-11-02 改：一律走混合检索，取 3～4 段）
+
+def _gather(q):
+    """二、历史材料：走混合检索拿段，顺手把 events 展开成 anchor → 事。"""
     res = hybrid_json(q, 8)
     events = (res or {}).get("events") or []
     # 段 → 事：hybrid 的 events 里自带每件事的段表，比按区间反推稳（vec 那路没有 docs）
@@ -298,15 +332,19 @@ def main():
             # hybrid 万一哪天把段表换成 anchor 字符串列表，别在这里 AttributeError
             if isinstance(s2, dict) and s2.get("anchor"):
                 doc_of[s2["anchor"]] = e
-
     try:
-        segs = recall.parse_segments() if (res and res.get("segs")) else {}
+        segs = corpus.parse_segments() if (res and res.get("segs")) else {}
     except Exception as e:
         print("段索引读不出来：%s" % type(e).__name__, file=sys.stderr)
         segs = {}
-    kind_w = {"压缩摘要": 1.25, "事实": 1.2, "二夏": 1.0, "报错": 0.9, "木木": 0.85, "子代理": 0.95}
-    # 标准记忆文件的 sid：常设四册合起来是 ac000001、规则 ac000003、二夏记忆 ac000004、抽屉 ac000005
-    MEM_SIDS = {"ac000001": "常设", "ac000003": "规则", "ac000004": "二夏记忆", "ac000005": "抽屉"}
+    return res, doc_of, segs
+
+
+_KIND_W = {"压缩摘要": 1.25, "事实": 1.2, "二夏": 1.0, "报错": 0.9, "木木": 0.85, "子代理": 0.95}
+
+
+def _rank_segs(res, segs, doc_of):
+    """段 → 候选：先按「今天的 / 更早的 / 标准记忆」分层，层内按分排，再限额。"""
     today = time.strftime("%Y-%m-%d")
 
     def tier_of(sid, tm):
@@ -336,7 +374,7 @@ def main():
         sid = meta.get("sid") or s.get("sid") or anchor.split("-")[0]
         tm = meta.get("time") or s.get("time") or ""
         e = doc_of.get(anchor) or {}
-        sc = float(s.get("score") or 0) * kind_w.get(s.get("kind") or meta.get("kind"), 1.0)
+        sc = float(s.get("score") or 0) * _KIND_W.get(s.get("kind") or meta.get("kind"), 1.0)
         ranked.append((tier_of(sid, tm), -sc, anchor, s, body, sid, tm,
                        e.get("seq"), e.get("title")))
     ranked.sort(key=lambda x: (x[0], x[1]))
@@ -352,27 +390,35 @@ def main():
         sid_n[sid] += 1
         doc_n[(sid, seq)] += 1
         picked.append(item)
+    return picked
 
-    # 三、今天这一层：接力的最新一节不进语料（每轮都变，过期交接会误导），索引里没有它；
+
+def _emit_relay_head(relay, picked, st):
+    """三、今天这一层：接力的最新一节。"""
+    today = time.strftime("%Y-%m-%d")
+    # 接力的最新一节不进语料（每轮都变，过期交接会误导），索引里没有它；
     # 分段里一段「今天」都没取到时，把接力头一节原样带上——那是新壳最该先知道的事。
-    if (relay and relay[0][0].startswith(today) and relay[0][0] not in printed_titles
+    if (relay and relay[0][0].startswith(today) and relay[0][0] not in st.titles
             # 注意：picked 为空时 not any(...) 为真，于是会补上接力头一节——
             # 这正是想要的（今天一段都没取到，就让新壳先看到最要紧的那件事）。
             # 这处「空集合为真」是设计，不是 bug（2026-11-02 排查确认）。
             and not any(x[0] == 0 for x in picked)):
-        head_len = min(600, max(0, budget - used - 450))
+        head_len = min(600, max(0, st.budget - st.used - 450))
         head_body = re.sub(r"\s+", " ", relay[0][1])
         if head_len >= 150 and head_body:
             shown = head_body[:head_len] + ("…" if len(head_body) > head_len else "")
-            print("\n【本壳刚做完的（接力最新一节，%s）】" % today)
             line = "· " + relay[0][0] + "：" + shown
-            print(line)
-            used += len(line) + 1
-            printed_titles.add(relay[0][0])
+            # 这一行标题原来就不记账（跟第一路和「这条线上的事」那两处不一样），
+            # 2026-11-04 拆函数时照原样留着，没顺手改——改预算口径另说。
+            print("\n【本壳刚做完的（接力最新一节，%s）】" % today)
+            st.say(line)
+            st.titles.add(relay[0][0])
 
-    # 四、历史段按预算分配：3～4 段，每段 150～260 字，宁可多给一条短的，
-    # 也不让一条吃掉全部预算。
-    left = max(0, budget - used)
+
+def _emit_history(picked, st):
+    """四、历史段按预算分配：3～4 段，每段 150～260 字。返回实际给了几段。"""
+    # 宁可多给一条短的，也不让一条吃掉全部预算。
+    left = max(0, st.budget - st.used)
     n_seg = min(4, len(picked))
     while n_seg > 0 and left < 150 * n_seg:
         n_seg -= 1
@@ -380,75 +426,96 @@ def main():
         # 预算真不够时，宁可给一条短的，也别一条都不给——
         # 注释里写的是「宁可多给一条短的」，代码原来是「一条都不给」。
         n_seg = 1
-    if n_seg:
-        per = min(260, left // n_seg)
-        _hdr2 = "\n【以前在哪儿做过、怎么判的】"
-        print(_hdr2)
-        used += len(_hdr2)
-        for tier, _negs, anchor, s, body, sid, tm, seq, title in picked[:n_seg]:
-            src = ("标准记忆 " + MEM_SIDS[sid]) if sid in MEM_SIDS else ("壳 " + sid)
-            tm_s = str(tm or "")
-            if tier == 0:
-                day = "今天 " + tm_s[11:16]
-            elif tm_s.startswith("0000") or len(tm_s) < 10:
-                day = "日期不明"
-            else:
-                day = tm_s[:16] or "日期不明"
-            head = ("第%s事 %s" % (seq, title)) if seq else "未归事"
-            prefix = "· [%s] %s · %s · %s：" % (anchor, src, day, head)
-            # 头部（锚点/来源/日期/事）也要吃预算，不然四行下来隐性超两三百字
-            room = max(20, min(per, budget - used - len(prefix) - 1))
-            piece = clip_seg(body, room)
-            line = prefix + piece
-            print(line)
-            used += len(line) + 1
+    if not n_seg:
+        return 0
+    per = min(260, left // n_seg)
+    st.say("\n【以前在哪儿做过、怎么判的】")
+    for tier, _negs, anchor, s, body, sid, tm, seq, title in picked[:n_seg]:
+        src = ("标准记忆 " + MEM_SIDS[sid]) if sid in MEM_SIDS else ("壳 " + sid)
+        tm_s = str(tm or "")
+        if tier == 0:
+            day = "今天 " + tm_s[11:16]
+        elif tm_s.startswith("0000") or len(tm_s) < 10:
+            day = "日期不明"
+        else:
+            day = tm_s[:16] or "日期不明"
+        head = ("第%s事 %s" % (seq, title)) if seq else "未归事"
+        prefix = "· [%s] %s · %s · %s：" % (anchor, src, day, head)
+        # 头部（锚点/来源/日期/事）也要吃预算，不然四行下来隐性超两三百字
+        room = max(20, min(per, st.budget - st.used - len(prefix) - 1))
+        st.say(prefix + clip_seg(body, room))
+    return n_seg
 
-    # 这条线上的事（只报标题，不占正文预算）
+
+def _emit_events(events, st):
+    """这条线上的事（只报标题，不占正文预算）。"""
     strong = [e for e in events if _int(e.get("hits")) >= 2][:3]
-    if strong:
-        _hdr3 = "\n【这条线上的事，按相关度】"
-        print(_hdr3)
-        used += len(_hdr3)
-        for e in strong:
-            print("· %s 第%s事 %s [%s-%03d-%s-%03d]"
-                  % (e.get("sid"), e.get("seq"), e.get("title"),
-                     e.get("sid"), _int(e.get("a")), e.get("sid"), _int(e.get("b"))))
+    if not strong:
+        return
+    st.say("\n【这条线上的事，按相关度】")
+    for e in strong:
+        st.say("· %s 第%s事 %s [%s-%03d-%s-%03d]"
+               % (e.get("sid"), e.get("seq"), e.get("title"),
+                  e.get("sid"), _int(e.get("a")), e.get("sid"), _int(e.get("b"))))
 
-    # 兜底：自动取料（不给 --问）时问题是从流水里掐出来的半句，常年匹配不上，
-    # 结果注入块里只剩一行标题——那等于没注入。这时候退回「接力最新的两节 +
-    # 相关度最高的那几段」，宁可粗一点，也得让新壳开口有东西。
-    if used < 300:
-        print("\n【兜底：问题没匹配上，以下是最新交接原文】")
-        for title, body in relay[:2]:
-            if title in printed_titles:
-                continue
-            left = budget - used
-            cap = min(420, left - len(title) - 2)
+
+def _emit_fallback(relay, res, segs, n_seg, st):
+    """兜底：自动取料（不给 --问）时问题是从流水里掐出来的半句，常年匹配不上。
+
+    结果注入块里只剩一行标题——那等于没注入。这时候退回「接力最新的两节 +
+    相关度最高的那几段」，宁可粗一点，也得让新壳开口有东西。
+    """
+    if st.used >= 300:
+        return
+    print("\n【兜底：问题没匹配上，以下是最新交接原文】")
+    for title, body in relay[:2]:
+        if title in st.titles:
+            continue
+        left = st.budget - st.used
+        cap = min(420, left - len(title) - 2)
+        if cap < 40:
+            continue
+        body = re.sub(r"\s+", " ", body)[:cap]
+        if body:
+            st.say("· " + title + "：" + body)
+            st.titles.add(title)
+    if not n_seg and res and res.get("segs"):
+        print("\n【这条线上最相关的几段（兜底）】")
+        for s in res["segs"][:2]:
+            a2 = s.get("anchor")
+            left = st.budget - st.used
+            cap = min(260, left - len(str(a2)) - 4)
             if cap < 40:
+                break
+            body = re.sub(r"\s+", " ", (segs.get(a2) or {}).get("text") or s.get("text") or "")[:cap]
+            if not body:
                 continue
-            body = re.sub(r"\s+", " ", body)[:cap]
-            if body:
-                line = "· " + title + "：" + body
-                print(line)
-                used += len(line) + 1
-                printed_titles.add(title)
-        if not n_seg and res and res.get("segs"):
-            print("\n【这条线上最相关的几段（兜底）】")
-            for s in res["segs"][:2]:
-                a2 = s.get("anchor")
-                left = budget - used
-                cap = min(260, left - len(str(a2)) - 4)
-                if cap < 40:
-                    break
-                body = re.sub(r"\s+", " ", (segs.get(a2) or {}).get("text") or s.get("text") or "")[:cap]
-                if not body:
-                    continue
-                line = "· [%s] %s" % (a2, body)
-                print(line)
-                used += len(line) + 1
+            st.say("· [%s] %s" % (a2, body))
 
-    if used > budget:
-        print("\n（超预算了：实取 %d 字，目标 %d。下次收窄问题。）" % (used, budget))
+
+def main():
+    q, budget = _args(sys.argv[1:])
+    relay = sections(MEM / "接力.md")
+    q = _pick_task(q, relay)
+    if not q:
+        sys.exit("既没给 --问，接力里也没找到「下一步」。")
+
+    _say("【这壳要接着办的事】" + re.sub(r"\s+", " ", q)[:300])
+    _say_tone()
+    _say_readme()
+    _say_plain()
+
+    st = _St(budget)
+    _emit_rules(_rule_pool(q), st)
+    res, doc_of, segs = _gather(q)
+    picked = _rank_segs(res, segs, doc_of)
+    _emit_relay_head(relay, picked, st)
+    n_seg = _emit_history(picked, st)
+    _emit_events((res or {}).get("events") or [], st)
+    _emit_fallback(relay, res, segs, n_seg, st)
+
+    if st.used > st.budget:
+        print("\n（超预算了：实取 %d 字，目标 %d。下次收窄问题。）" % (st.used, st.budget))
 
 
 if __name__ == "__main__":
