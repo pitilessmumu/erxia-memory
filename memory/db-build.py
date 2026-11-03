@@ -94,6 +94,14 @@ def main():
     except Exception as e:
         print("来源过滤跳过（%s: %s）" % (type(e).__name__, e), file=sys.stderr)
     print("语料 %d 段、事 %d 条" % (len(segs), len(events)))
+    # 0 段不许往下建（2026-11-04 踩出来的）：段头格式写错时一段都解析不出来，
+    # 而建库照样成功、退出码照样 0，表现是「建好了但什么都查不到」。
+    # 宁可在这儿硬停，把格式摊出来给人对。
+    if not segs:
+        sys.exit("语料 0 段，不建空库。段头格式应该是：\n"
+                 "  ## [会话id-序号] 谁说的 2026-11-02 09:20:18\n"
+                 "（方括号里不能多东西；谁说的和日期之间只隔一个空格；日期可以不带）\n"
+                 "现在看的目录：%s" % recall.CORPUS)
     if "--看家底" in sys.argv:
         chars = sum(len(s["text"]) for s in segs)
         print("正文合计 %d 字，库路径 %s" % (chars, DB))
