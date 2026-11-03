@@ -521,4 +521,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except config.ConfigError as e:
+        # 空壳场景（2026-11-04 空壳测试）：别人刚拿到仓库、还没放自己的语料。
+        # 这里要给一句人话，不是一段栈——一装上就抛 traceback，人就走了。
+        sys.exit("还没法开工：%s\n  把你的会话按格式放进 origin/corpus/，再跑 python memory/db-build.py" % e)
